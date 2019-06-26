@@ -1568,8 +1568,9 @@ return [
 	# @since 2.5
 	##
 	'smwgFulltextSearchTableOptions' => [
-		'mysql'  => [ 'ENGINE=MyISAM, DEFAULT CHARSET=utf8' ],
-		'sqlite' => [ 'FTS4' ]
+		'percona' => [ 'ENGINE=InnoDB, DEFAULT CHARSET=utf8' ],
+		'mysql'   => [ 'ENGINE=MyISAM, DEFAULT CHARSET=utf8' ],
+		'sqlite'  => [ 'FTS4' ]
 	],
 	##
 

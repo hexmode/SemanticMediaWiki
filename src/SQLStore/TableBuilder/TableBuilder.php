@@ -58,6 +58,9 @@ abstract class TableBuilder implements TableBuilderInterface, MessageReporterAwa
 		$instance = null;
 
 		switch ( $connection->getType() ) {
+			case 'percona':
+				$instance = new MySQLTableBuilder( $connection );
+				break;
 			case 'mysql':
 				$instance = new MySQLTableBuilder( $connection );
 				break;
