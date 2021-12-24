@@ -1,0 +1,74 @@
+DB_ROOT_USER     ?= root
+DB_ROOT_PWD      ?=
+
+MW_INSTALL_PATH  ?= /var/www/html
+MW_EXT_PATH      ?= /var/www/html/extensions
+
+MW_SERVER        ?= http://localhost
+MW_USER_NAME     ?= WikiSysop
+MW_USER_PWD      ?=
+
+MW_DB_TYPE       ?= sqlite
+MW_DB_SERVER     ?= localhost
+MW_DB_PATH       ?= /var/www/data
+MW_DB_USER       ?= wiki
+MW_DB_PWD        ?=
+MW_DB_NAME       ?= wiki
+
+MW_VER           ?= 1.35
+COMPOSER_VERSION ?= 2
+
+IN_CONTAINER     ?= false
+
+.SILENT: verifyExtName
+verifyExtName:
+	test "${EXT_NAME}" != "ext-name-not-set"													||	(	\
+		echo "You must set EXT_NAME to use this Makefile."										&&	\
+		exit 1																						\
+	)
+
+cmd ?= echo "No command given!"
+.SILENT: run
+run: verifyExtName
+	cat <<<"$(call runInContainer,${cmd})"
+
+containerID := docker.io/library/mediawiki:${MW_VER}
+containerName ?= ${EXT_NAME}-mediawiki
+dockerCli ?= sudo docker
+copyVars := EXT_NAME MW_INSTALL_PATH MW_EXT_PATH DB_ROOT_USER DB_ROOT_PWD MW_DB_TYPE MW_DB_SERVER	\
+	MW_DB_PATH MW_DB_USER MW_DB_PWD MW_DB_NAME MW_VER COMPOSER_VERSION composerPreferSource 		\
+	IN_CONTAINER dockerCli MW_USER_NAME MW_USER_PWD MW_SERVER
+SHELL := /bin/bash
+ciPath ?= ${PWD}/conf/${MW_VER}
+ciExtPath ?= ${ciPath}/extensions
+ciDataPath ?= ${ciPath}/data
+lsPath ?= ${ciPath}/LocalSettings.php
+goals ?= ci
+
+mirrorPath ?= ${ciPath}/mirror
+extJsonJson ?= ${mirrorPath}/extjsonuploader.toolforge.org/ExtensionJson.json
+extJsonJsonSrc ?= https://extjsonuploader.toolforge.org/ExtensionJson.json
+mwDotComposer ?= ${ciPath}/dot-composer
+mwVendor ?= ${ciPath}/vendor
+smwGitUrl ?= https://github.com/SemanticMediaWiki/SemanticMediaWiki.git
+arGitUrl ?= https://github.com/wikimedia/mediawiki-extensions-ApprovedRevs.git
+
+mounts := "${PWD}:/target:z"																		\
+			"${mwDotComposer}:/root/.cache/composer"												\
+			"${mwVendor}:${MW_INSTALL_PATH}/vendor"													\
+			"${lsPath}:${MW_INSTALL_PATH}/LocalSettings.php"										\
+			"${ciDataPath}:${MW_DB_PATH}"															\
+			"${PWD}:${MW_EXT_PATH}/${EXT_NAME}"
+mountAll = $(foreach mount,${1},																	\
+				$(shell d=`echo ${mount}|sed s,:.*,,`; test ! -e $$d || echo -v ${mount})			\
+			)
+envFileVars = --env-file <(env -i $(foreach var,${1},${var}=$(${var})))
+runInContainer = $(shell ${dockerCli} run --rm -w /target $(call mountAll,${mounts})				\
+						$(call envFileVars,${copyVars}) ${containerID}								\
+						sh -c 'IN_CONTAINER=true ${1}')
+siteName ?= mediawiki-${EXT_NAME}
+# Local Variables:
+# mode: makefile
+# eval: (display-fill-column-indicator-mode)
+# eval: (set (make-local-variable 'fill-column) 101)
+# End:

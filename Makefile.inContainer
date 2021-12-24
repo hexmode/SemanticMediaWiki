@@ -1,0 +1,140 @@
+# -*- Makefile -*-
+.PHONY: ci test cs phpunit phpcs stan psalm parser verifyExtName
+
+ci: test cs
+test: phpunit parser
+cs: phpcs stan psalm
+
+phpunit:
+	test ! -f phpunit.xml.dist																	||	\
+		php ${MW_INSTALL_PATH}/tests/phpunit/phpunit.php -c phpunit.xml.dist
+
+phpcs:
+	test ! -f phpcs.xml																		||	(	\
+		cd ${MW_INSTALL_PATH}																	&&	\
+		vendor/bin/phpcs -p -s --standard=$(shell pwd)/phpcs.xml									\
+	)
+
+stan:
+	test ! -f phpstan.neon																		||	\
+		${MW_INSTALL_PATH}/vendor/bin/phpstan analyse --configuration=phpstan.neon --memory-limit=2G
+
+psalm:
+	test ! -f psalm.xml																			||	\
+		${MW_INSTALL_PATH}/vendor/bin/psalm --config=psalm.xml
+
+parser:
+	test ! -f tests/parser/parserTests.txt														||	\
+		php ${MW_INSTALL_PATH}/tests/parser/parserTests.php --file=tests/parser/parserTests.txt
+
+runJobs:
+	php ${MW_INSTALL_PATH}/maintenance/runJobs.php
+
+lFiles := LocalSettings.php composer.local.json composer.lock
+lDirs := vendor
+PWD ?= $(shell pwd)
+ciPath ?= ${PWD}/conf/${MW_VER}
+build: verifyExtName
+	${make} setupLinks getComposer mediaWikiComposerUpdate mediaWikiInstall enableDebugOutput		\
+		installSemanticMediaWiki build.tar.gz
+
+build.tar.gz:
+	tar -C ${ciPath} -cvzf $@ .
+
+extractBuild:
+	mkdir -p ${ciPath}
+	tar -C ${ciPath} -xzf build.tar.gz
+	${make} setupLinks
+
+lnTarget=(export oStat=`stat -c %i ${1} 2> /dev/null`; export nStat=`stat -c %i ${2} 2> /dev/null`;	\
+		test -L ${1} -o ! -e ${1} -o \( -L ${1} -a -e ${2} -a ! -L ${2} \)							\
+				-o $${oStat:-0} -eq $${nStat:-0}											||	(	\
+			echo Copying ${1} to ${2}															&&	\
+			cp -pr ${1} ${2}																	&&	\
+			rm -rf ${1}																		)	;	\
+		test -L "${1}" -a -e "${2}" -o $${oStat:-0} -eq $${nStat:-0}							||	\
+			ln -s ${2} ${1}																			\
+	)
+
+setupLinks: verifyExtName
+	for d in ${lDirs}																		;	do	\
+		echo Handling dir $$d ...																&&	\
+		$(call lnTarget,${MW_INSTALL_PATH}/$$d,${ciPath}/$$d)									;	\
+	done
+	for f in ${lFiles}																		;	do	\
+		echo Handling file $$f ...																;	\
+		$(call lnTarget,${MW_INSTALL_PATH}/$$f,${ciPath}/$$f)									;	\
+	done
+
+.PHONY: zip
+zip:
+	# need to add this to docker image
+	test -x /usr/bin/zip																		||	\
+		apt update && apt install -y unzip strace
+
+ciComposer ?= ${ciPath}/composer
+.PHONY: getComposer
+getComposer: ${ciComposer}
+${ciComposer}: zip
+	php -r "copy('https://getcomposer.org/installer', 'installer');"
+	php -r "copy('https://composer.github.io/installer.sig', 'expected');"
+	echo `cat expected` " installer" | sha384sum -c -
+	php installer --${COMPOSER_VERSION}
+	rm -f installer expected
+	mkdir -p ${ciPath}
+	mv composer.phar $@
+	touch $@
+
+composerPreferSource ?=
+mediaWikiComposerUpdate: zip
+	COMPOSER=composer.local.json ${ciComposer} --working-dir=${MW_INSTALL_PATH} --no-update			\
+		require mediawiki/semantic-media-wiki dev-`git branch --show-current`
+	COMPOSER=composer.local.json ${ciComposer} --working-dir=${MW_INSTALL_PATH}						\
+		config repositories.semantic-media-wiki 													\
+		'{"type": "path", "url": "extensions/SemanticMediaWiki"}'
+	${ciComposer} --working-dir=${MW_INSTALL_PATH} --no-update 										\
+		 require wikimedia/composer-merge-plugin 2
+	${ciComposer} update --working-dir=${MW_INSTALL_PATH}											\
+		$(if ${composerPreferSource},--prefer-source,)
+
+mediaWikiInstall: verifyExtName
+	export TMPLS=${MW_INSTALL_PATH}/LocalSettings.php											&&	\
+	test ! -f ${MW_INSTALL_PATH}/LocalSettings.php												||	\
+		TMPLS=`mktemp`																			&&	\
+	echo $$TMPLS && \
+	php ${MW_INSTALL_PATH}/maintenance/install.php			   										\
+		--pass="${MW_USER_PWD}"								   										\
+		--server="${MW_SERVER}"								   										\
+		--scriptpath=""										   										\
+		--dbtype="${MW_DB_TYPE}"								   									\
+		--dbserver="${MW_DB_SERVER}"							   									\
+		--installdbuser="${DB_ROOT_USER}"						   									\
+		--installdbpass="${DB_ROOT_PWD}"						   									\
+		--dbname="${MW_DB_NAME}"										   							\
+		--dbuser="${MW_DB_USER}"								   									\
+		--dbpass="${MW_DB_PWD}"								   										\
+		--dbpath="${MW_DB_PATH}"								   									\
+		--extensions="${EXT_NAME}"																	\
+		"${EXT_NAME}-test" "${MW_USER_NAME}"
+	test ! -f ${MW_INSTALL_PATH}/hold-LocalSettings.php										||	(	\
+		cat ${MW_INSTALL_PATH}/hold-LocalSettings.php > ${MW_INSTALL_PATH}/LocalSettings.php	&&	\
+		rm ${MW_INSTALL_PATH}/hold-LocalSettings.php												\
+	)
+
+enableDebugOutput:
+	(																								\
+		echo 'error_reporting(E_ALL| E_STRICT);'												&&	\
+		echo 'ini_set("display_errors", 1);'													&&	\
+		echo '$$wgShowExceptionDetails = true;'													&&	\
+		echo '$$wgDevelopmentWarnings = true;'														\
+	) >> ${MW_INSTALL_PATH}/LocalSettings.php
+
+installSemanticMediaWiki:
+	${ciComposer} --working-dir=${MW_INSTALL_PATH} --no-update 										\
+		 require wikimedia/composer-merge-plugin 2
+	php ${MW_INSTALL_PATH}/maintenance/update.php --quick
+
+# Local Variables:
+# eval: (display-fill-column-indicator-mode)
+# eval: (set (make-local-variable 'fill-column) 101)
+# End:
