@@ -4,6 +4,7 @@ namespace SMW\MediaWiki\Hooks;
 
 use File;
 use Hooks;
+use MediaWiki\MediaWikiServices;
 use ParserOptions;
 use SMW\Services\ServicesFactory as ApplicationFactory;
 use SMW\Localizer;
@@ -59,19 +60,35 @@ class FileUpload implements HookListener {
 		return $title !== null && $this->namespaceExaminer->isSemanticEnabled( $title->getNamespace() );
 	}
 
-	private function doProcess( $file, $reUploadStatus = false ) {
+	private function doProcess( File $file, bool $reUploadStatus = false ): void {
 
 		$applicationFactory = ApplicationFactory::getInstance();
 		$filePage = $this->makeFilePage( $file, $reUploadStatus );
 
-		// Avoid WikiPage.php: The supplied ParserOptions are not safe to cache.
+		// Avoid WikiPage.php exception: The supplied ParserOptions are not safe to cache.
 		// Fix the options or set $forceParse = true.
 		$forceParse = true;
 
-		$parserData = $applicationFactory->newParserData(
-			$file->getTitle(),
-			$filePage->getParserOutput( $this->makeCanonicalParserOptions(), null, $forceParse )
-		);
+		$mws = MediaWikiServices::getInstance();
+		if ( method_exists( $mws, "getParserOutputAccess" ) ) {
+			// This should be safe since the "canonical parser options" are for an anoymous user.
+			$forceParse = 1;
+			$revision = $filePage->getRevisionRecord();
+
+			$status = MediaWikiServices::getInstance()->getParserOutputAccess()->getParserOutput(
+				$filePage, $this->makeCanonicalParserOptions(), $revision, $forceParse
+			);
+			if ( !$status->isOK() ) {
+				// Use __toString to aid debugging
+				throw new \Exception( "Got error during FileUpload hook.\n" . $status );
+			}
+			$parserData = $applicationFactory->newParserData( $file->getTitle(), $status->getValue() );
+		} else {
+			$parserData = $applicationFactory->newParserData(
+				$file->getTitle(),
+				$filePage->getParserOutput( $this->makeCanonicalParserOptions(), null, $forceParse )
+			);
+		}
 
 		$pageInfoProvider = $applicationFactory->newMwCollaboratorFactory()->newPageInfoProvider(
 			$filePage
@@ -100,8 +117,6 @@ class FileUpload implements HookListener {
 
 		$parserData->pushSemanticDataToParserOutput();
 		$parserData->updateStore( true );
-
-		return true;
 	}
 
 	private function makeFilePage( $file, $reUploadStatus ) {
