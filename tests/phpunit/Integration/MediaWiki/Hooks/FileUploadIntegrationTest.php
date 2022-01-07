@@ -2,10 +2,14 @@
 
 namespace SMW\Tests\Integration\MediaWiki\Hooks;
 
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\MutableRevisionRecord;
+use MediaWiki\Revision\SlotRecord;
 use SMW\DIWikiPage;
 use SMW\Localizer;
 use SMW\Tests\DatabaseTestCase;
 use Title;
+use WikitextContent;
 
 /**
  * @group SMW
@@ -77,16 +81,35 @@ class FileUploadIntegrationTest extends DatabaseTestCase {
 		parent::tearDown();
 	}
 
+	private function makeFakeRevision( Title $title, $text ) {
+		$page = MediaWikiServices::getInstance()->getWikiPageFactory()->newFromTitle( $title );
+		// construct fake revision with no ID
+		$content = new WikitextContent( $text );
+		$rev = new MutableRevisionRecord( $page->getTitle() );
+		$rev->setPageId( $page->getId() );
+		$rev->setContent( SlotRecord::MAIN, $content );
+		$page->updateRevisionOn( $this->getDBConnection(), $rev, 0 );
+
+		return $rev;
+	}
+
 	public function testFileUploadForDummyTextFile() {
 		Localizer::getInstance()->clear();
 
-		$subject = new DIWikiPage( 'Foo.txt', NS_FILE );
+		$fName = "Foo.txt";
+		$subject = new DIWikiPage( $fName, NS_FILE );
 		$fileNS = Localizer::getInstance()->getNsText( NS_FILE );
 
-		$dummyTextFile = $this->fixturesFileProvider->newUploadForDummyTextFile( 'Foo.txt' );
+		$dummyTextFile = $this->fixturesFileProvider->newUploadForDummyTextFile( $fName );
+		$title = $subject->getTitle();
+		if ( $title === null ) {
+			$this->assertTrue( false, "Title for DIWikiPage returned null" );
+			return;
+		}
+		$this->makeFakeRevision( $title, $fName );
 
 		$this->assertTrue(
-			$dummyTextFile->doUpload( '[[HasFile::File:Foo.txt]]' )
+			$dummyTextFile->doUpload( "[[HasFile::$fileNS:$fName]]" )
 		);
 
 		$this->testEnvironment->executePendingDeferredUpdates();
@@ -94,7 +117,7 @@ class FileUploadIntegrationTest extends DatabaseTestCase {
 		$expected = [
 			'propertyCount'  => 4,
 			'propertyKeys'   => [ 'HasFile', '_MEDIA', '_MIME', '_SKEY' ],
-			'propertyValues' => [ "$fileNS:Foo.txt", 'TEXT', 'text/plain', 'Foo.txt' ]
+			'propertyValues' => [ "$fileNS:$fName", 'TEXT', 'text/plain', $fName ]
 		];
 
 		$this->semanticDataValidator->assertThatPropertiesAreSet(

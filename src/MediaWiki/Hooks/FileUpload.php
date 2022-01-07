@@ -62,19 +62,17 @@ class FileUpload implements HookListener {
 
 	private function doProcess( File $file, bool $reUploadStatus = false ): void {
 
-		$applicationFactory = ApplicationFactory::getInstance();
 		$filePage = $this->makeFilePage( $file, $reUploadStatus );
 
 		// Avoid WikiPage.php exception: The supplied ParserOptions are not safe to cache.
 		// Fix the options or set $forceParse = true.
 		$forceParse = true;
 
+		$applicationFactory = ApplicationFactory::getInstance();
 		$mws = MediaWikiServices::getInstance();
 		if ( method_exists( $mws, "getParserOutputAccess" ) ) {
-			// This should be safe since the "canonical parser options" are for an anoymous user.
-			$forceParse = 1;
 			$revision = $filePage->getRevisionRecord();
-
+			throw new \Exception( var_export( $revision, true ) );
 			$status = MediaWikiServices::getInstance()->getParserOutputAccess()->getParserOutput(
 				$filePage, $this->makeCanonicalParserOptions(), $revision, $forceParse
 			);
